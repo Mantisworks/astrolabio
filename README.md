@@ -49,9 +49,6 @@ To display the observatory on any page or post, simply use the following shortco
 
 
 
-[Image of altitude and azimuth coordinate system]
-
-
 ## 📝 License
 
 This project is licensed under the **GPLv2**. Please refer to the `LICENSE` file for further legal information.
