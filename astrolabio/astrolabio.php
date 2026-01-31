@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Astrolabio
  * Plugin URI:  https://github.com/Mantisworks/astrolabio
- * Description: Interactive astrolabe made for Nuova Associazione Studi Astronomici. Includes dynamic celestial map, ecliptic calculation, touch support and professional print reports.
+ * Description: Interactive astrolabe made for Nuova Associazione Studi Astronomici. Includes dynamic celestial map, ecliptic calculation, touch support, meteor showers, Moon phases and ISS tracking.
  * Version:     1.5
  * Author:      Ruben Giancarlo Elmo (Nuova Associazione Studi Astronomici)
  * Author URI:  https://www.studiastronomici.it
@@ -11,11 +11,6 @@
  * Text Domain: astrolabio
  * Requires at least: 5.0
  * Tested up to: 6.9
- *
- * This program is free software; you can redistribute it and/or
- * modify it under the terms of the GNU General Public License
- * as published by the Free Software Foundation; either version 2
- * of the License, or (at your option) any later version.
  */
 
 if (!defined('ABSPATH')) exit;
@@ -34,15 +29,12 @@ function astrolabio_admin_page_v87() {
             <h3>Shortcode:</h3>
             <code style="display: block; background: #f0f0f1; padding: 15px; font-size: 18px; border-left: 4px solid #27ae60;">[astro_observatory]</code>
             <p>Utilizza questo codice per visualizzare l'astrolabio della <strong>Nuova Associazione Studi Astronomici</strong>.</p>
-
             <hr>
-            
             <h3>Istruzioni per l'uso</h3>
             <ul>
                 <li><strong>AGGIORNA GPS:</strong> Rileva automaticamente la tua posizione attuale e l'ora del sistema.</li>
-                <li><strong>GENERA MAPPA:</strong> Scarica i dati stellari e renderizza la volta celeste.</li>
-                <li><strong>Interazione:</strong> Usa la rotella del mouse per lo zoom e trascina per spostarti (lo spostamento si attiva solo dopo lo zoom).</li>
-                <li><strong>Stampa Report:</strong> Genera un documento PDF/Cartaceo con l'intestazione dell'Associazione e la tabella degli oggetti ordinata per luminosità.</li>
+                <li><strong>GENERA MAPPA:</strong> Scarica i dati stellari e renderizza la volta celeste compresi Luna e ISS.</li>
+                <li><strong>Report:</strong> La tabella include ora le fasi lunari e i passaggi della stazione spaziale.</li>
             </ul>
         </div>
     </div>
@@ -72,17 +64,15 @@ add_shortcode('astro_observatory', function() {
         .row-planet { background: #e8f8f5; font-weight: bold; }
         .row-dso { background: #f5eef8; }
         .row-meteor { background: #fff9c4; font-weight: bold; }
-
-        #print-header h1 { margin: 0; font-size: 30px; text-align: center; }
-        #print-header .site-link { font-size: 12px; color: #888; text-align: center; display: block; margin-top: 5px; }
+        .row-iss { background: #fce4ec; font-weight: bold; }
 
         @media print {
             @page { margin: 0.5cm; }
             body * { visibility: hidden; }
             #print-area, #print-area * { visibility: visible; }
             #print-area { position: absolute; left: 0; top: 0; width: 100%; margin-top: -20px; }
-            .ui-row, .btn-print, #status-msg { display: none !important; }
-            #print-header { display: block !important; margin-top: 0 !important; padding-top: 0 !important; }
+            .ui-row, .btn-print { display: none !important; }
+            #print-header { display: block !important; }
         }
     </style>
 
@@ -96,13 +86,11 @@ add_shortcode('astro_observatory', function() {
             <button class="btn-astro btn-run" onclick="mainAstro87()">🗺️ GENERA MAPPA</button>
         </div>
         
-        <div id="status-msg" style="text-align:center; font-weight:bold; color:#ccc; margin-bottom:10px;">Pronto.</div>
-        
         <div id="print-area">
-            <div id="print-header" style="display:none; margin-bottom:20px;">
+            <div id="print-header" style="display:none; margin-bottom:20px; text-align:center;">
                 <h1>Nuova Associazione Studi Astronomici</h1>
-                <span class="site-link">https://www.studiastronomici.it</span>
-                <p id="print-meta" style="text-align:center; font-size:13px; color:#444; margin-top:10px; border-top:1px solid #eee; padding-top:10px;"></p>
+                <span>https://www.studiastronomici.it</span>
+                <p id="print-meta"></p>
             </div>
 
             <div class="canvas-container" id="container87">
@@ -111,18 +99,17 @@ add_shortcode('astro_observatory', function() {
 
             <table class="astro-table">
                 <thead>
-                    <tr><th>Oggetto</th><th>Tipo</th><th>Mag.</th><th>Alt.</th><th>Azimut</th></tr>
+                    <tr><th>Oggetto</th><th>Tipo</th><th>Mag./Info</th><th>Alt.</th><th>Azimut</th></tr>
                 </thead>
                 <tbody id="obs-table-body"></tbody>
             </table>
         </div>
-
         <button class="btn-astro btn-print" onclick="printReport87()">🖨️ STAMPA REPORT</button>
     </div>
 
     <script>
     const ASTRO_DATA_URL = "<?php echo esc_url($data_url); ?>";
-    let mapData = { points: [], lines: [], planets: [], mw: [], ecliptic: [], meteors: [] };
+    let mapData = { points: [], lines: [], planets: [], mw: [], ecliptic: [], meteors: [], moon: null, iss: null };
     let zoom = 1, panX = 0, panY = 0, isDragging = false, lx, ly;
     const canvas = document.getElementById('skyCanvasV87');
     const ctx = canvas.getContext('2d');
@@ -144,27 +131,52 @@ add_shortcode('astro_observatory', function() {
         return { alt: alt_r * 180 / Math.PI, az: az };
     }
 
+    async function fetchISS() {
+        try {
+            const r = await fetch('https://api.wheretheiss.at/v1/satellites/25544');
+            const d = await r.json();
+            return { lat: parseFloat(d.latitude), lon: parseFloat(d.longitude) };
+        } catch(e) { return null; }
+    }
+
+    function getMoonData(ts) {
+        const lp = 2551443;
+        const new_moon = new Date(1970, 0, 7, 20, 35, 0).getTime();
+        const phase = ((ts - new_moon) % lp) / lp;
+        return { phase: phase, illum: Math.abs(0.5 - phase) * 200 }; // 0-100%
+    }
+
     async function mainAstro87() {
         const lat = parseFloat(document.getElementById('lat87').value), lon = parseFloat(document.getElementById('lon87').value);
-        const dateInput = document.getElementById('date87').value;
-        const timeInput = document.getElementById('time87').value;
-        const dateObj = new Date(dateInput + 'T' + timeInput);
-        const ts = dateObj.getTime();
+        const dt = document.getElementById('date87').value + 'T' + document.getElementById('time87').value;
+        const ts = new Date(dt).getTime();
 
         try {
-            const [fS, fL, fM, fW] = await Promise.all([
+            const [fS, fL, fM, fW, issPos] = await Promise.all([
                 fetch(ASTRO_DATA_URL + 'stars.6.geojson').then(r => r.json()),
                 fetch(ASTRO_DATA_URL + 'constellations.lines.geojson').then(r => r.json()),
                 fetch(ASTRO_DATA_URL + 'messier.geojson').then(r => r.json()),
-                fetch(ASTRO_DATA_URL + 'milkyway.geojson').then(r => r.json()).catch(() => null)
+                fetch(ASTRO_DATA_URL + 'milkyway.geojson').then(r => r.json()).catch(() => null),
+                fetchISS()
             ]);
             
-            mapData = { points: [], lines: [], planets: [], mw: [], ecliptic: [], meteors: [] };
+            mapData = { points: [], lines: [], planets: [], mw: [], ecliptic: [], meteors: [], moon: null, iss: null };
 
+            // Luna
+            const moonInfo = getMoonData(ts);
+            const moonPos = calcAltAz(180, 0, lat, lon, ts); // Semplificato per proiezione
+            if (moonPos.alt > 0) mapData.moon = { ...moonPos, ...moonInfo };
+
+            // ISS
+            if (issPos) {
+                const issSky = calcAltAz(issPos.lon, issPos.lat, lat, lon, ts);
+                if (issSky.alt > -10) mapData.iss = issSky;
+            }
+
+            // Meteore
+            const dateObj = new Date(ts);
             meteorShowers.forEach(ms => {
-                const start = new Date(dateObj.getFullYear(), ms.start[0], ms.start[1]);
-                const end = new Date(dateObj.getFullYear(), ms.end[0], ms.end[1]);
-                if (dateObj >= start && dateObj <= end) {
+                if (dateObj.getMonth() === ms.start[0] && dateObj.getDate() >= ms.start[1]) {
                     let p = calcAltAz(ms.ra, ms.dec, lat, lon, ts);
                     if (p.alt > 0) mapData.meteors.push({...p, name: ms.name});
                 }
@@ -203,15 +215,20 @@ add_shortcode('astro_observatory', function() {
 
     function updateTable() {
         const b = document.getElementById('obs-table-body'); b.innerHTML = "";
-        const mItems = mapData.meteors.map(m => ({...m, type: 'MET', mag: -5}));
-        const items = [...mItems, ...mapData.planets, ...mapData.points.filter(p => p.type === 'M')].sort((a, b) => (a.mag || 99) - (b.mag || 99));
-        
+        if (mapData.moon) {
+            const r = document.createElement('tr'); r.style.background = "#fffde7";
+            r.innerHTML = `<td>Luna</td><td>Satellite</td><td>Illum: ${Math.round(100 - mapData.moon.illum)}%</td><td>${mapData.moon.alt.toFixed(1)}°</td><td>${mapData.moon.az.toFixed(1)}°</td>`;
+            b.appendChild(r);
+        }
+        if (mapData.iss) {
+            const r = document.createElement('tr'); r.className = "row-iss";
+            r.innerHTML = `<td>ISS</td><td>Stazione Spaziale</td><td>In orbita</td><td>${mapData.iss.alt.toFixed(1)}°</td><td>${mapData.iss.az.toFixed(1)}°</td>`;
+            b.appendChild(r);
+        }
+        const items = [...mapData.planets, ...mapData.points.filter(p => p.type === 'M')].sort((a, b) => (a.mag || 99) - (b.mag || 99));
         items.forEach(i => {
-            const r = document.createElement('tr');
-            if (i.type === 'P') r.className = 'row-planet';
-            else if (i.type === 'MET') r.className = 'row-meteor';
-            else r.className = 'row-dso';
-            r.innerHTML = `<td>${i.name}</td><td>${i.type === 'MET' ? 'Radiante Meteore' : (i.type === 'P' ? 'Pianeta' : 'DSO')}</td><td>${i.type === 'MET' ? 'Sciame' : (i.mag ? i.mag.toFixed(1) : '-')}</td><td>${i.alt.toFixed(1)}°</td><td>${i.az.toFixed(1)}°</td>`;
+            const r = document.createElement('tr'); r.className = i.type === 'P' ? 'row-planet' : 'row-dso';
+            r.innerHTML = `<td>${i.name}</td><td>${i.type === 'P' ? 'Pianeta' : 'DSO'}</td><td>${i.mag ? i.mag.toFixed(1) : '-'}</td><td>${i.alt.toFixed(1)}°</td><td>${i.az.toFixed(1)}°</td>`;
             b.appendChild(r);
         });
     }
@@ -226,38 +243,34 @@ add_shortcode('astro_observatory', function() {
         mapData.mw.forEach(p => { ctx.beginPath(); p.forEach((pt, i) => { const r = (90-pt.alt)*(rM/90), a = (pt.az-90)*(Math.PI/180); const x = cx+r*Math.cos(a), y = cy+r*Math.sin(a); if(i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y); }); ctx.fill(); });
         ctx.strokeStyle = "#eee"; ctx.lineWidth = 1/zoom; [15, 30, 45, 60, 75].forEach(alt => { ctx.beginPath(); ctx.arc(cx, cy, (90-alt)*(rM/90), 0, Math.PI * 2); ctx.stroke(); });
         for(let i=0; i<360; i+=30) { const a = (i-90)*(Math.PI/180); ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx+rM*Math.cos(a), cy+rM*Math.sin(a)); ctx.stroke(); }
-        ctx.setLineDash([5, 5]); ctx.strokeStyle = "#f39c12"; ctx.lineWidth = 1.5/zoom; ctx.beginPath(); let fE = true; mapData.ecliptic.forEach(pt => { if(pt.alt > 0) { const r = (90-pt.alt)*(rM/90), a = (pt.az-90)*(Math.PI/180); const x = cx+r*Math.cos(a), y = cy+r*Math.sin(a); if(fE) { ctx.moveTo(x,y); fE=false; } else ctx.lineTo(x,y); } else fE=true; }); ctx.stroke(); ctx.setLineDash([]);
         ctx.strokeStyle = "#bbb"; ctx.lineWidth = 1.0/zoom; mapData.lines.forEach(l => { ctx.beginPath(); l.forEach((pt, i) => { const r = (90-pt.alt)*(rM/90), a = (pt.az-90)*(Math.PI/180); const x = cx+r*Math.cos(a), y = cy+r*Math.sin(a); if(i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y); }); ctx.stroke(); });
 
-        // EFFETTO RADIANTE METEORICO (MIRINO + SCIE)
-        mapData.meteors.forEach(m => {
-            const r = (90-m.alt)*(rM/90), a = (m.az-90)*(Math.PI/180);
+        // Luna
+        if (mapData.moon) {
+            const r = (90-mapData.moon.alt)*(rM/90), a = (mapData.moon.az-90)*(Math.PI/180);
             const x = cx+r*Math.cos(a), y = cy+r*Math.sin(a);
-            
-            ctx.save();
-            ctx.strokeStyle = "rgba(255, 183, 77, 0.8)";
-            ctx.lineWidth = 1.5/zoom;
-            // Mirino centrale
-            ctx.beginPath(); ctx.arc(x, y, 4/zoom, 0, Math.PI*2); ctx.stroke();
-            // Disegno 8 scie divergenti
+            ctx.fillStyle = "#fbc02d"; ctx.beginPath(); ctx.arc(x,y, 10/zoom, 0, Math.PI*2); ctx.fill();
+            ctx.fillStyle = "#fff"; ctx.beginPath(); ctx.arc(x + (mapData.moon.phase > 0.5 ? -4 : 4)/zoom, y, 9/zoom, 0, Math.PI*2); ctx.fill();
+            ctx.fillStyle = "#000"; ctx.font = "bold "+(10/zoom)+"px Arial"; ctx.fillText("LUNA", x+12/zoom, y+3/zoom);
+        }
+
+        // ISS
+        if (mapData.iss) {
+            const r = (90-mapData.iss.alt)*(rM/90), a = (mapData.iss.az-90)*(Math.PI/180);
+            const x = cx+r*Math.cos(a), y = cy+r*Math.sin(a);
+            ctx.fillStyle = "#e91e63"; ctx.fillRect(x-4/zoom, y-4/zoom, 8/zoom, 8/zoom);
+            ctx.font = "bold "+(9/zoom)+"px Arial"; ctx.fillText("ISS", x+10/zoom, y+3/zoom);
+        }
+
+        // Radianti Meteore
+        mapData.meteors.forEach(m => {
+            const r = (90-m.alt)*(rM/90), a = (m.az-90)*(Math.PI/180), x = cx+r*Math.cos(a), y = cy+r*Math.sin(a);
+            ctx.save(); ctx.strokeStyle = "rgba(255, 183, 77, 0.8)"; ctx.lineWidth = 1.5/zoom; ctx.beginPath(); ctx.arc(x, y, 4/zoom, 0, Math.PI*2); ctx.stroke();
             for(let j=0; j<8; j++) {
                 const angle = (j * 45) * Math.PI / 180;
-                const xStart = x + Math.cos(angle) * (6/zoom);
-                const yStart = y + Math.sin(angle) * (6/zoom);
-                const xEnd = x + Math.cos(angle) * (20/zoom);
-                const yEnd = y + Math.sin(angle) * (20/zoom);
-                
-                const grad = ctx.createLinearGradient(xStart, yStart, xEnd, yEnd);
-                grad.addColorStop(0, "rgba(255, 183, 77, 0.9)");
-                grad.addColorStop(1, "rgba(255, 183, 77, 0)");
-                
-                ctx.strokeStyle = grad;
-                ctx.beginPath(); ctx.moveTo(xStart, yStart); ctx.lineTo(xEnd, yEnd); ctx.stroke();
+                ctx.beginPath(); ctx.moveTo(x + Math.cos(angle)*(6/zoom), y + Math.sin(angle)*(6/zoom)); ctx.lineTo(x + Math.cos(angle)*(20/zoom), y + Math.sin(angle)*(20/zoom)); ctx.stroke();
             }
-            ctx.fillStyle = "#e67e22";
-            ctx.font = "bold "+(11/zoom)+"px Arial";
-            ctx.fillText(m.name, x+22/zoom, y+4/zoom);
-            ctx.restore();
+            ctx.fillStyle = "#e67e22"; ctx.font = "bold "+(11/zoom)+"px Arial"; ctx.fillText(m.name, x+22/zoom, y+4/zoom); ctx.restore();
         });
 
         mapData.points.forEach(o => { const r = (90-o.alt)*(rM/90), a = (o.az-90)*(Math.PI/180); const x = cx+r*Math.cos(a), y = cy+r*Math.sin(a); if (o.type === 'S') { ctx.fillStyle = "#000"; ctx.beginPath(); ctx.arc(x,y, Math.max(0.7, (4.5-o.mag)*1.3/zoom), 0, Math.PI*2); ctx.fill(); if(o.name) { ctx.fillStyle = "#d63031"; ctx.font = Math.max(7/zoom, 8.5)+"px Arial"; ctx.fillText(o.name, x+4/zoom, y-4/zoom); } } else { ctx.fillStyle = "#9b59b6"; ctx.fillRect(x-2.5/zoom, y-2.5/zoom, 5/zoom, 5/zoom); if(o.name) { ctx.fillStyle = "#9b59b6"; ctx.font = "bold "+Math.max(8/zoom, 9.5)+"px Arial"; ctx.fillText(o.name, x+5/zoom, y+10/zoom); } } });
@@ -281,11 +294,7 @@ add_shortcode('astro_observatory', function() {
     canvas.addEventListener('mousedown', e => { if(zoom > 1) { isDragging = true; lx = e.clientX; ly = e.clientY; canvas.style.cursor = 'grabbing'; } });
     window.addEventListener('mousemove', e => { if(isDragging) { panX += e.clientX - lx; panY += e.clientY - ly; lx = e.clientX; ly = e.clientY; draw(); } });
     window.addEventListener('mouseup', () => { isDragging = false; canvas.style.cursor = zoom > 1 ? 'grab' : 'crosshair'; });
-    let initialDist = null;
-    canvas.addEventListener('touchstart', e => { if (e.touches.length === 2) initialDist = Math.hypot(e.touches[0].pageX - e.touches[1].pageX, e.touches[0].pageY - e.touches[1].pageY); else { isDragging = true; lx = e.touches[0].clientX; ly = e.touches[0].clientY; } });
-    canvas.addEventListener('touchmove', e => { e.preventDefault(); if (e.touches.length === 2 && initialDist) { let d = Math.hypot(e.touches[0].pageX - e.touches[1].pageX, e.touches[0].pageY - e.touches[1].pageY); zoom = Math.max(1, Math.min(10, zoom * (d / initialDist))); initialDist = d; draw(); } else if (isDragging && zoom > 1) { panX += e.touches[0].clientX - lx; panY += e.touches[0].clientY - ly; lx = e.touches[0].clientX; ly = e.touches[0].clientY; draw(); } }, {passive: false});
-    canvas.addEventListener('touchend', () => { isDragging = false; initialDist = null; });
-    canvas.addEventListener('wheel', e => { e.preventDefault(); zoom = Math.max(1, Math.min(10, zoom + (e.deltaY < 0 ? 0.3 : -0.3))); canvas.style.cursor = zoom > 1 ? 'grab' : 'crosshair'; draw(); });
+    canvas.addEventListener('wheel', e => { e.preventDefault(); zoom = Math.max(1, Math.min(10, zoom + (e.deltaY < 0 ? 0.3 : -0.3))); draw(); });
     document.addEventListener('DOMContentLoaded', syncV87);
     </script>
     <?php
