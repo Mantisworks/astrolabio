@@ -1,7 +1,7 @@
 <?php
 /**
  * Plugin Name: Astrolabio
- * Plugin URI:  https://www.studiastronomici.it
+ * Plugin URI:  https://github.com/Mantisworks/astrolabio
  * Description: Interactive astrolabe made for Nuova Associazione Studi Astronomici. Includes dynamic celestial map, ecliptic calculation, touch support and professional print reports.
  * Version:     1.5
  * Author:      Ruben Giancarlo Elmo (Nuova Associazione Studi Astronomici)
@@ -60,9 +60,9 @@ add_shortcode('astro_observatory', function() {
         .ui-row { display: flex; flex-wrap: wrap; gap: 8px; background: #f1f1f1; padding: 12px; border-radius: 8px; margin-bottom: 15px; align-items: center; }
         .ui-row input { border: 1px solid #ccc; padding: 8px; border-radius: 4px; font-size: 14px; flex: 1; min-width: 90px; }
         .btn-astro { border: none; padding: 10px 15px; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 13px; height: 38px; }
-        .btn-sync { background: #e67e22; color: #fff; }
-        .btn-run { background: #27ae60; color: #fff; }
-        .btn-print { background: #34495e; color: #fff; margin: 20px auto; display: block; width: 220px; }
+        .btn-sync { background: #333; color: #fff; }
+        .btn-run { background: #333; color: #fff; }
+        .btn-print { background: #333; color: #fff; margin: 20px auto; display: block; width: 220px; }
         
         .canvas-container { border: 2px solid #000; border-radius: 50%; overflow: hidden; background: #fff; position: relative; width: 100%; max-width: 800px; margin: 0 auto; touch-action: none; cursor: crosshair; }
         #skyCanvasV87 { display: block; width: 100%; height: auto; }
@@ -71,6 +71,7 @@ add_shortcode('astro_observatory', function() {
         .astro-table th, .astro-table td { padding: 8px; border: 1px solid #ddd; text-align: left; }
         .row-planet { background: #e8f8f5; font-weight: bold; }
         .row-dso { background: #f5eef8; }
+        .row-meteor { background: #fff9c4; font-weight: bold; }
 
         #print-header h1 { margin: 0; font-size: 30px; text-align: center; }
         #print-header .site-link { font-size: 12px; color: #888; text-align: center; display: block; margin-top: 5px; }
@@ -95,7 +96,7 @@ add_shortcode('astro_observatory', function() {
             <button class="btn-astro btn-run" onclick="mainAstro87()">🗺️ GENERA MAPPA</button>
         </div>
         
-        <div id="status-msg" style="text-align:center; font-weight:bold; color:#d35400; margin-bottom:10px;">Pronto.</div>
+        <div id="status-msg" style="text-align:center; font-weight:bold; color:#ccc; margin-bottom:10px;">Pronto.</div>
         
         <div id="print-area">
             <div id="print-header" style="display:none; margin-bottom:20px;">
@@ -121,10 +122,17 @@ add_shortcode('astro_observatory', function() {
 
     <script>
     const ASTRO_DATA_URL = "<?php echo esc_url($data_url); ?>";
-    let mapData = { points: [], lines: [], planets: [], mw: [], ecliptic: [] };
+    let mapData = { points: [], lines: [], planets: [], mw: [], ecliptic: [], meteors: [] };
     let zoom = 1, panX = 0, panY = 0, isDragging = false, lx, ly;
     const canvas = document.getElementById('skyCanvasV87');
     const ctx = canvas.getContext('2d');
+
+    const meteorShowers = [
+        { name: "Quadrantidi", ra: 230, dec: 49, start: [0, 1], end: [0, 5] },
+        { name: "Liridi", ra: 271, dec: 33, start: [3, 16], end: [3, 25] },
+        { name: "Perseidi", ra: 48, dec: 58, start: [6, 17], end: [7, 24] },
+        { name: "Geminidi", ra: 112, dec: 33, start: [11, 4], end: [11, 17] }
+    ];
 
     function calcAltAz(ra, dec, lat, lon, ts) {
         const jd = (ts / 86400000) + 2440587.5, d = jd - 2451545.0;
@@ -138,7 +146,11 @@ add_shortcode('astro_observatory', function() {
 
     async function mainAstro87() {
         const lat = parseFloat(document.getElementById('lat87').value), lon = parseFloat(document.getElementById('lon87').value);
-        const ts = new Date(document.getElementById('date87').value + 'T' + document.getElementById('time87').value).getTime();
+        const dateInput = document.getElementById('date87').value;
+        const timeInput = document.getElementById('time87').value;
+        const dateObj = new Date(dateInput + 'T' + timeInput);
+        const ts = dateObj.getTime();
+
         try {
             const [fS, fL, fM, fW] = await Promise.all([
                 fetch(ASTRO_DATA_URL + 'stars.6.geojson').then(r => r.json()),
@@ -146,7 +158,18 @@ add_shortcode('astro_observatory', function() {
                 fetch(ASTRO_DATA_URL + 'messier.geojson').then(r => r.json()),
                 fetch(ASTRO_DATA_URL + 'milkyway.geojson').then(r => r.json()).catch(() => null)
             ]);
-            mapData = { points: [], lines: [], planets: [], mw: [], ecliptic: [] };
+            
+            mapData = { points: [], lines: [], planets: [], mw: [], ecliptic: [], meteors: [] };
+
+            meteorShowers.forEach(ms => {
+                const start = new Date(dateObj.getFullYear(), ms.start[0], ms.start[1]);
+                const end = new Date(dateObj.getFullYear(), ms.end[0], ms.end[1]);
+                if (dateObj >= start && dateObj <= end) {
+                    let p = calcAltAz(ms.ra, ms.dec, lat, lon, ts);
+                    if (p.alt > 0) mapData.meteors.push({...p, name: ms.name});
+                }
+            });
+
             if(fW) fW.features.forEach(f => {
                 let coords = f.geometry.type === 'Polygon' ? [f.geometry.coordinates] : f.geometry.coordinates;
                 coords.forEach(ps => {
@@ -180,10 +203,15 @@ add_shortcode('astro_observatory', function() {
 
     function updateTable() {
         const b = document.getElementById('obs-table-body'); b.innerHTML = "";
-        const items = [...mapData.planets, ...mapData.points.filter(p => p.type === 'M')].sort((a, b) => (a.mag || 99) - (b.mag || 99));
+        const mItems = mapData.meteors.map(m => ({...m, type: 'MET', mag: -5}));
+        const items = [...mItems, ...mapData.planets, ...mapData.points.filter(p => p.type === 'M')].sort((a, b) => (a.mag || 99) - (b.mag || 99));
+        
         items.forEach(i => {
-            const r = document.createElement('tr'); r.className = i.type === 'P' ? 'row-planet' : 'row-dso';
-            r.innerHTML = `<td>${i.name}</td><td>${i.type === 'P' ? 'Pianeta' : 'DSO'}</td><td>${i.mag ? i.mag.toFixed(1) : '-'}</td><td>${i.alt.toFixed(1)}°</td><td>${i.az.toFixed(1)}°</td>`;
+            const r = document.createElement('tr');
+            if (i.type === 'P') r.className = 'row-planet';
+            else if (i.type === 'MET') r.className = 'row-meteor';
+            else r.className = 'row-dso';
+            r.innerHTML = `<td>${i.name}</td><td>${i.type === 'MET' ? 'Radiante Meteore' : (i.type === 'P' ? 'Pianeta' : 'DSO')}</td><td>${i.type === 'MET' ? 'Sciame' : (i.mag ? i.mag.toFixed(1) : '-')}</td><td>${i.alt.toFixed(1)}°</td><td>${i.az.toFixed(1)}°</td>`;
             b.appendChild(r);
         });
     }
@@ -200,6 +228,38 @@ add_shortcode('astro_observatory', function() {
         for(let i=0; i<360; i+=30) { const a = (i-90)*(Math.PI/180); ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx+rM*Math.cos(a), cy+rM*Math.sin(a)); ctx.stroke(); }
         ctx.setLineDash([5, 5]); ctx.strokeStyle = "#f39c12"; ctx.lineWidth = 1.5/zoom; ctx.beginPath(); let fE = true; mapData.ecliptic.forEach(pt => { if(pt.alt > 0) { const r = (90-pt.alt)*(rM/90), a = (pt.az-90)*(Math.PI/180); const x = cx+r*Math.cos(a), y = cy+r*Math.sin(a); if(fE) { ctx.moveTo(x,y); fE=false; } else ctx.lineTo(x,y); } else fE=true; }); ctx.stroke(); ctx.setLineDash([]);
         ctx.strokeStyle = "#bbb"; ctx.lineWidth = 1.0/zoom; mapData.lines.forEach(l => { ctx.beginPath(); l.forEach((pt, i) => { const r = (90-pt.alt)*(rM/90), a = (pt.az-90)*(Math.PI/180); const x = cx+r*Math.cos(a), y = cy+r*Math.sin(a); if(i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y); }); ctx.stroke(); });
+
+        // EFFETTO RADIANTE METEORICO (MIRINO + SCIE)
+        mapData.meteors.forEach(m => {
+            const r = (90-m.alt)*(rM/90), a = (m.az-90)*(Math.PI/180);
+            const x = cx+r*Math.cos(a), y = cy+r*Math.sin(a);
+            
+            ctx.save();
+            ctx.strokeStyle = "rgba(255, 183, 77, 0.8)";
+            ctx.lineWidth = 1.5/zoom;
+            // Mirino centrale
+            ctx.beginPath(); ctx.arc(x, y, 4/zoom, 0, Math.PI*2); ctx.stroke();
+            // Disegno 8 scie divergenti
+            for(let j=0; j<8; j++) {
+                const angle = (j * 45) * Math.PI / 180;
+                const xStart = x + Math.cos(angle) * (6/zoom);
+                const yStart = y + Math.sin(angle) * (6/zoom);
+                const xEnd = x + Math.cos(angle) * (20/zoom);
+                const yEnd = y + Math.sin(angle) * (20/zoom);
+                
+                const grad = ctx.createLinearGradient(xStart, yStart, xEnd, yEnd);
+                grad.addColorStop(0, "rgba(255, 183, 77, 0.9)");
+                grad.addColorStop(1, "rgba(255, 183, 77, 0)");
+                
+                ctx.strokeStyle = grad;
+                ctx.beginPath(); ctx.moveTo(xStart, yStart); ctx.lineTo(xEnd, yEnd); ctx.stroke();
+            }
+            ctx.fillStyle = "#e67e22";
+            ctx.font = "bold "+(11/zoom)+"px Arial";
+            ctx.fillText(m.name, x+22/zoom, y+4/zoom);
+            ctx.restore();
+        });
+
         mapData.points.forEach(o => { const r = (90-o.alt)*(rM/90), a = (o.az-90)*(Math.PI/180); const x = cx+r*Math.cos(a), y = cy+r*Math.sin(a); if (o.type === 'S') { ctx.fillStyle = "#000"; ctx.beginPath(); ctx.arc(x,y, Math.max(0.7, (4.5-o.mag)*1.3/zoom), 0, Math.PI*2); ctx.fill(); if(o.name) { ctx.fillStyle = "#d63031"; ctx.font = Math.max(7/zoom, 8.5)+"px Arial"; ctx.fillText(o.name, x+4/zoom, y-4/zoom); } } else { ctx.fillStyle = "#9b59b6"; ctx.fillRect(x-2.5/zoom, y-2.5/zoom, 5/zoom, 5/zoom); if(o.name) { ctx.fillStyle = "#9b59b6"; ctx.font = "bold "+Math.max(8/zoom, 9.5)+"px Arial"; ctx.fillText(o.name, x+5/zoom, y+10/zoom); } } });
         mapData.planets.forEach(p => { const r = (90-p.alt)*(rM/90), a = (p.az-90)*(Math.PI/180); const x = cx+r*Math.cos(a), y = cy+r*Math.sin(a); ctx.fillStyle = "#27ae60"; ctx.beginPath(); ctx.arc(x,y, 5/zoom, 0, Math.PI * 2); ctx.fill(); ctx.font = "bold "+(12/zoom)+"px Arial"; ctx.fillText(p.name, x+6/zoom, y+10/zoom); });
         ctx.restore(); ctx.fillStyle = "#000"; ctx.font = "bold 18px sans-serif"; ctx.textAlign = "center"; ctx.fillText("N", 400, 20); ctx.fillText("S", 400, 795); ctx.fillText("E", 785, 407); ctx.fillText("W", 15, 407);
