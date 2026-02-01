@@ -32,10 +32,10 @@
 1. Download the repository as a ZIP file.
 2. Upload the `astrolabio` folder to your site's `/wp-content/plugins/` directory.
 3. Activate the plugin through the WordPress Dashboard.
-4. Ensure the `/data/` directory contains the required GeoJSON files for rendering.
+4. Ensure the `/data/` directory contains the required GeoJSON files for rendering (already included).
 
 ### Shortcode
-To display the observatory on any page or post, simply use the following shortcode:
+To display the astrolabe on any page or post, simply use the following shortcode:
 
 `[astro_observatory]`
 
