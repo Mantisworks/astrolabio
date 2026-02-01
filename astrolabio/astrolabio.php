@@ -109,10 +109,14 @@ add_shortcode('astro_observatory', function() {
 
     <script>
     const ASTRO_DATA_URL = "<?php echo esc_url($data_url); ?>";
-    let mapData = { points: [], lines: [], planets: [], mw: [], ecliptic: [], meteors: [], moon: null, iss: null };
+    let mapData = { points: [], lines: [], planets: [], mw: [], ecliptic: [], meteors: [], moon: null, iss: null, issPath: [] };
     let zoom = 1, panX = 0, panY = 0, isDragging = false, lx, ly;
     const canvas = document.getElementById('skyCanvasV87');
     const ctx = canvas.getContext('2d');
+
+    // Icona Satellite SVG caricata una volta
+    const issIcon = new Image();
+    issIcon.src = 'data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0iI2U5MWU2MyI+PHBhdGggZD0iTTIgMTRoMnYyaDJ2MmgyVjhoLTJWNmgtMlY0SDJ2MTBtMTYtNnYyaDJ2Mmgydi0yaC0ydi0yaC0yek00IDhoMnYyaDJWOGgyVjZINFY4em0xMCAyaDJ2Mmg0di0yaC0ydi0yaC0ydjJ6Ii8+PC9zdmc+';
 
     const meteorShowers = [
         { name: "Quadrantidi", ra: 230, dec: 49, start: [0, 1], end: [0, 5] },
@@ -160,17 +164,25 @@ add_shortcode('astro_observatory', function() {
                 fetchISS()
             ]);
             
-            mapData = { points: [], lines: [], planets: [], mw: [], ecliptic: [], meteors: [], moon: null, iss: null };
+            mapData = { points: [], lines: [], planets: [], mw: [], ecliptic: [], meteors: [], moon: null, iss: null, issPath: [] };
 
             // Luna
             const moonInfo = getMoonData(ts);
             const moonPos = calcAltAz(180, 0, lat, lon, ts); // Semplificato per proiezione
             if (moonPos.alt > 0) mapData.moon = { ...moonPos, ...moonInfo };
 
-            // ISS
+            // ISS e Traiettoria
             if (issPos) {
                 const issSky = calcAltAz(issPos.lon, issPos.lat, lat, lon, ts);
                 if (issSky.alt > -10) mapData.iss = issSky;
+                
+                // Calcola scia traiettoria (punti +/- 5 minuti)
+                for (let i = -300; i <= 300; i += 60) {
+                    const offsetTs = ts + (i * 1000);
+                    // Semplificazione: usiamo la stessa lat/lon per la proiezione cielo 
+                    const p = calcAltAz(issPos.lon + (i * 0.07), issPos.lat, lat, lon, offsetTs);
+                    if (p.alt > -5) mapData.issPath.push(p);
+                }
             }
 
             // Meteore
@@ -241,8 +253,20 @@ add_shortcode('astro_observatory', function() {
         
         ctx.fillStyle = "rgba(173, 216, 230, 0.3)";
         mapData.mw.forEach(p => { ctx.beginPath(); p.forEach((pt, i) => { const r = (90-pt.alt)*(rM/90), a = (pt.az-90)*(Math.PI/180); const x = cx+r*Math.cos(a), y = cy+r*Math.sin(a); if(i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y); }); ctx.fill(); });
-        ctx.strokeStyle = "#eee"; ctx.lineWidth = 1/zoom; [15, 30, 45, 60, 75].forEach(alt => { ctx.beginPath(); ctx.arc(cx, cy, (90-alt)*(rM/90), 0, Math.PI * 2); ctx.stroke(); });
-        for(let i=0; i<360; i+=30) { const a = (i-90)*(Math.PI/180); ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx+rM*Math.cos(a), cy+rM*Math.sin(a)); ctx.stroke(); }
+        
+        // Griglia con Gradi
+        ctx.strokeStyle = "#eee"; ctx.lineWidth = 1/zoom; ctx.fillStyle = "#888"; ctx.font = (10/zoom) + "px sans-serif";
+        [15, 30, 45, 60, 75].forEach(alt => { 
+            const rad = (90-alt)*(rM/90);
+            ctx.beginPath(); ctx.arc(cx, cy, rad, 0, Math.PI * 2); ctx.stroke(); 
+            ctx.fillText(alt + "°", cx + 5/zoom, cy - rad + 12/zoom);
+        });
+        for(let i=0; i<360; i+=30) { 
+            const a = (i-90)*(Math.PI/180); 
+            ctx.beginPath(); ctx.moveTo(cx, cy); ctx.lineTo(cx+rM*Math.cos(a), cy+rM*Math.sin(a)); ctx.stroke(); 
+            ctx.fillText(i + "°", cx+(rM+15)*Math.cos(a), cy+(rM+15)*Math.sin(a));
+        }
+
         ctx.strokeStyle = "#bbb"; ctx.lineWidth = 1.0/zoom; mapData.lines.forEach(l => { ctx.beginPath(); l.forEach((pt, i) => { const r = (90-pt.alt)*(rM/90), a = (pt.az-90)*(Math.PI/180); const x = cx+r*Math.cos(a), y = cy+r*Math.sin(a); if(i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y); }); ctx.stroke(); });
 
         // Luna
@@ -254,12 +278,25 @@ add_shortcode('astro_observatory', function() {
             ctx.fillStyle = "#000"; ctx.font = "bold "+(10/zoom)+"px Arial"; ctx.fillText("LUNA", x+12/zoom, y+3/zoom);
         }
 
-        // ISS
+        // Traiettoria ISS
+        if (mapData.issPath.length > 0) {
+            ctx.setLineDash([5/zoom, 5/zoom]); ctx.strokeStyle = "rgba(233, 30, 99, 0.4)"; ctx.lineWidth = 2/zoom;
+            ctx.beginPath();
+            mapData.issPath.forEach((pt, i) => {
+                const r = (90-pt.alt)*(rM/90), a = (pt.az-90)*(Math.PI/180);
+                const x = cx+r*Math.cos(a), y = cy+r*Math.sin(a);
+                if(i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y);
+            });
+            ctx.stroke(); ctx.setLineDash([]);
+        }
+
+        // ISS con Icona Grande
         if (mapData.iss) {
             const r = (90-mapData.iss.alt)*(rM/90), a = (mapData.iss.az-90)*(Math.PI/180);
             const x = cx+r*Math.cos(a), y = cy+r*Math.sin(a);
-            ctx.fillStyle = "#e91e63"; ctx.fillRect(x-4/zoom, y-4/zoom, 8/zoom, 8/zoom);
-            ctx.font = "bold "+(9/zoom)+"px Arial"; ctx.fillText("ISS", x+10/zoom, y+3/zoom);
+            const sSize = 24 / zoom;
+            ctx.drawImage(issIcon, x - sSize/2, y - sSize/2, sSize, sSize);
+            ctx.fillStyle = "#e91e63"; ctx.font = "bold "+(12/zoom)+"px Arial"; ctx.fillText("ISS", x+sSize/2 + 5, y+3/zoom);
         }
 
         // Radianti Meteore
