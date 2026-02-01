@@ -21,7 +21,7 @@
 - **Dynamic Star Map**: Real-time celestial rendering based on GPS coordinates.
 - **Full Mobile Support**: Smooth navigation with native Touch events, including Pinch-to-Zoom and Dragging.
 - **Advanced Astronomy**: Includes Ecliptic path, Milky Way visualization, and a complete Altazimuth grid.
-- **NASA-Style Reports**: Generates high-quality, printable observation reports featuring the Association's official header.
+- **Reports**: Generates high-quality, printable observation reports featuring the Association's official header.
 - **Automated Data Table**: A dynamic list of visible celestial bodies, automatically sorted by magnitude (brightness).
 - **Security Hardened**: Fully compliant with WordPress.org security standards (XSS protection and timezone synchronization).
 
